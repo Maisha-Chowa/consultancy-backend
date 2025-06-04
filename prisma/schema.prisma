@@ -5,15 +5,17 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Database connection
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
+// User and Authentication
 model User {
   id            String    @id @default(uuid())
   email         String    @unique
-  password      String
+  password      String?
   firstName     String
   lastName      String
   role          UserRole
@@ -26,11 +28,23 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
+  // Social login fields
+  authProvider  AuthProvider @default(LOCAL)
+  providerId    String?
+  providerData  Json?
+
   // Role-specific relations
-  admin         Admin?  //? means optional/nullable [one]
+  admin         Admin?
   lawyer        Lawyer?
   client        Client?
   staff         Staff?
+
+  // Common relations
+  cases         Case[]    @relation("UserCases")
+  appointments  Appointment[] @relation("UserAppointments")
+  documents     Document[] @relation("UserDocuments")
+  messages      Message[] @relation("UserMessages")
+  notifications Notification[] @relation("UserNotifications")
 
   @@map("users")
 }
@@ -42,6 +56,14 @@ enum UserRole {
   STAFF
 }
 
+enum AuthProvider {
+  LOCAL
+  GOOGLE
+  FACEBOOK
+  GITHUB
+}
+
+// Department Management
 model Department {
   id          String    @id @default(uuid())
   name        String    @unique
@@ -52,55 +74,53 @@ model Department {
   updatedAt   DateTime  @updatedAt
 
   // Relations
-  admins      Admin[] //means many to one relation [department has many admins]
+  admins      Admin[]
   staff       Staff[]
+  cases       Case[]    @relation("DepartmentCases")
 
   @@map("departments")
 }
 
+// Role-specific Models
 model Admin {
   id            String    @id @default(uuid())
-  
+  user          User      @relation(fields: [userId], references: [id])
   userId        String    @unique
-  
+  department    Department @relation(fields: [departmentId], references: [id])
   departmentId  String
   permissions   String[]
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-
-  user          User      @relation(fields: [userId], references: [id])
-  department    Department @relation(fields: [departmentId], references: [id])
 
   @@map("admins")
 }
 
 model Lawyer {
   id            String    @id @default(uuid())
- 
+  user          User      @relation(fields: [userId], references: [id])
   userId        String    @unique
   specialization String[]
   barNumber     String    @unique
   experience    Int       // in years
+  cases         Case[]    @relation("LawyerCases")
+  appointments  Appointment[] @relation("LawyerAppointments")
+  documents     Document[] @relation("LawyerDocuments")
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-
-
-   user          User      @relation(fields: [userId], references: [id])
-   cases         Case[]    @relation("LawyerCases")
-   appointments  Appointment[] @relation("LawyerAppointments")
 
   @@map("lawyers")
 }
 
 model Client {
   id            String    @id @default(uuid())
-  userId        String    @unique
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
   user          User      @relation(fields: [userId], references: [id])
+  userId        String    @unique
   cases         Case[]    @relation("ClientCases")
   appointments  Appointment[] @relation("ClientAppointments")
+  documents     Document[] @relation("ClientDocuments")
+  invoices      Invoice[] @relation("ClientInvoices")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@map("clients")
 }
@@ -118,15 +138,26 @@ model Staff {
   @@map("staff")
 }
 
+// Case Management
 model Case {
   id          String    @id @default(uuid())
   title       String
   description String
+  caseNumber  String    @unique
   status      CaseStatus @default(OPEN)
+  priority    Priority  @default(MEDIUM)
+  type        CaseType
+  department  Department @relation("DepartmentCases", fields: [departmentId], references: [id])
+  departmentId String
   client      Client    @relation("ClientCases", fields: [clientId], references: [id])
   clientId    String
   lawyer      Lawyer    @relation("LawyerCases", fields: [lawyerId], references: [id])
   lawyerId    String
+  documents   Document[] @relation("CaseDocuments")
+  appointments Appointment[] @relation("CaseAppointments")
+  invoices    Invoice[] @relation("CaseInvoices")
+  users       User[]    @relation("UserCases")
+  messages    Message[] @relation("CaseMessages")
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -136,20 +167,182 @@ model Case {
 enum CaseStatus {
   OPEN
   IN_PROGRESS
-  CLOSED
   PENDING
+  CLOSED
+  ARCHIVED
 }
 
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum CaseType {
+  CIVIL
+  CRIMINAL
+  FAMILY
+  CORPORATE
+  REAL_ESTATE
+  INTELLECTUAL_PROPERTY
+  OTHER
+}
+
+// Document Management
+model Document {
+  id          String    @id @default(uuid())
+  title       String
+  description String?
+  fileUrl     String
+  fileType    String
+  fileSize    Int
+  version     Int       @default(1)
+  isPublic    Boolean   @default(false)
+  user        User      @relation("UserDocuments", fields: [userId], references: [id])
+  userId      String
+  case        Case?     @relation("CaseDocuments", fields: [caseId], references: [id])
+  caseId      String?
+  lawyer      Lawyer?   @relation("LawyerDocuments", fields: [lawyerId], references: [id])
+  lawyerId    String?
+  client      Client?   @relation("ClientDocuments", fields: [clientId], references: [id])
+  clientId    String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("documents")
+}
+
+// Appointment System
 model Appointment {
   id          String    @id @default(uuid())
-  date        DateTime
+  title       String
   description String?
+  startTime   DateTime
+  endTime     DateTime
+  status      AppointmentStatus @default(SCHEDULED)
+  type        AppointmentType
+  location    String?
+  meetingLink String?
+  case        Case?     @relation("CaseAppointments", fields: [caseId], references: [id])
+  caseId      String?
   client      Client    @relation("ClientAppointments", fields: [clientId], references: [id])
   clientId    String
   lawyer      Lawyer    @relation("LawyerAppointments", fields: [lawyerId], references: [id])
   lawyerId    String
+  user        User      @relation("UserAppointments", fields: [userId], references: [id])
+  userId      String
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
   @@map("appointments")
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum AppointmentType {
+  CONSULTATION
+  COURT_HEARING
+  DOCUMENT_SIGNING
+  CASE_REVIEW
+  OTHER
+}
+
+// Billing and Payments
+model Invoice {
+  id          String    @id @default(uuid())
+  invoiceNumber String  @unique
+  amount      Float
+  status      InvoiceStatus @default(PENDING)
+  dueDate     DateTime
+  client      Client    @relation("ClientInvoices", fields: [clientId], references: [id])
+  clientId    String
+  case        Case      @relation("CaseInvoices", fields: [caseId], references: [id])
+  caseId      String
+  payments    Payment[]
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("invoices")
+}
+
+model Payment {
+  id          String    @id @default(uuid())
+  amount      Float
+  status      PaymentStatus @default(PENDING)
+  paymentMethod PaymentMethod
+  transactionId String?
+  invoice      Invoice   @relation(fields: [invoiceId], references: [id])
+  invoiceId    String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("payments")
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CREDIT_CARD
+  DEBIT_CARD
+  BANK_TRANSFER
+  CASH
+  OTHER
+}
+
+// Communication
+model Message {
+  id          String    @id @default(uuid())
+  content     String
+  isRead      Boolean   @default(false)
+  sender      User      @relation("UserMessages", fields: [senderId], references: [id])
+  senderId    String
+  case        Case?     @relation("CaseMessages", fields: [caseId], references: [id])
+  caseId      String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("messages")
+}
+
+// Notifications
+model Notification {
+  id          String    @id @default(uuid())
+  title       String
+  message     String
+  type        NotificationType
+  isRead      Boolean   @default(false)
+  user        User      @relation("UserNotifications", fields: [userId], references: [id])
+  userId      String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("notifications")
+}
+
+enum NotificationType {
+  APPOINTMENT
+  CASE_UPDATE
+  DOCUMENT
+  PAYMENT
+  MESSAGE
+  SYSTEM
 }
